@@ -11,10 +11,10 @@ import os
 # ==========================================
 # 設定區
 # ==========================================
-FILE_MARGIN = '/home/hpe/openairinterface5g/cmake_targets/ran_build/build/learned_margin.txt'
+FILE_MARGIN = '/home/hpe/openairinterface5g/cmake_targets/ran_build/build/logs/learned_margin.txt.000'
 CENTER_MARGIN = 500
 
-FILE_PROFILE = '/home/hpe/openairinterface5g/cmake_targets/ran_build/build/slot_profile_us.txt'
+FILE_PROFILE = '/home/hpe/openairinterface5g/cmake_targets/ran_build/build/logs/slot_profile_us.txt.000'
 CENTER_PROFILE = 0
 
 HOST_IP = '0.0.0.0'

@@ -177,7 +177,7 @@ def analyze_harq_log_final(filename):
 if __name__ == "__main__":
     # 使用您的絕對路徑
     #log_file_path = "/home/hpe/openairinterface5g-develop-latest/cmake_targets/ran_build/build/harq_timing.txt"
-    log_file_path = "/home/hpe/openairinterface5g/cmake_targets/ran_build/build/harq_timing.txt"
+    log_file_path = "/home/hpe/openairinterface5g/cmake_targets/ran_build/build/logs/harq_timing.txt.000"
 
     # 檢查路徑是否存在
     if os.path.exists(log_file_path):
