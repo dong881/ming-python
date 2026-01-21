@@ -16,9 +16,9 @@ SERVER_HOST = '0.0.0.0'
 
 def parse_log_file(filepath):
     """
-    針對新的 JITTER_DEBUG 格式進行解析
+    針對新的 JITTER_DEBUG 格式進行解析 (包含 avg_diff)
     格式範例: 
-    1328073.745199 [I] ... [JITTER_DEBUG] slot:0 jitter:97 j_avg:87 diff:48 late:-267 early:-315 margin:343
+    1329267.565210 [I] ... [JITTER_DEBUG] slot:0 jitter:105 j_avg:83 diff:3 avg_diff:1 late:-351 early:-354 margin:392
     """
     if not os.path.exists(filepath):
         print(f"❌ 錯誤: 找不到檔案 {filepath}")
@@ -29,22 +29,22 @@ def parse_log_file(filepath):
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        # Regex 對應提供的 Log 格式
-        # Group 1: Timestamp, 2: Slot, 3: Jitter, 4: J_avg, 5: Diff, 6: Late, 7: Early, 8: Margin
-        pattern = re.compile(r"([\d\.]+)\s+\[I\].*?\[JITTER_DEBUG\]\s+slot:(\d+)\s+jitter:(-?\d+)\s+j_avg:(-?\d+)\s+diff:(-?\d+)\s+late:(-?\d+)\s+early:(-?\d+)\s+margin:(-?\d+)")
+        # Regex 更新: 加入 avg_diff 的匹配
+        # Group順序: 1:Timestamp, 2:Slot, 3:Jitter, 4:J_avg, 5:Diff, 6:Avg_diff, 7:Late, 8:Early, 9:Margin
+        pattern = re.compile(r"([\d\.]+)\s+\[I\].*?\[JITTER_DEBUG\]\s+slot:(\d+)\s+jitter:(-?\d+)\s+j_avg:(-?\d+)\s+diff:(-?\d+)\s+avg_diff:(-?\d+)\s+late:(-?\d+)\s+early:(-?\d+)\s+margin:(-?\d+)")
         matches = pattern.findall(content)
 
         if not matches:
             print("⚠️ 警告: 檔案中沒有匹配到任何 [JITTER_DEBUG] 格式的數據！")
             return pd.DataFrame()
 
-        # 建立 DataFrame
-        columns = ['timestamp', 'slot', 'jitter', 'j_avg', 'diff', 'late', 'early', 'margin']
+        # 建立 DataFrame (新增 avg_diff)
+        columns = ['timestamp', 'slot', 'jitter', 'j_avg', 'diff', 'avg_diff', 'late', 'early', 'margin']
         df = pd.DataFrame(matches, columns=columns)
 
         # 轉換型別
         for col in columns:
-            df[col] = df[col].astype(float) # 統一轉 float 方便繪圖
+            df[col] = df[col].astype(float)
         
         df['slot'] = df['slot'].astype(int)
 
@@ -71,7 +71,6 @@ initial_fig.update_layout(
     xaxis={'visible': False}, yaxis={'visible': False}
 )
 
-# --- Layout (維持你原本的參考風格) ---
 app.layout = dbc.Container([
     dbc.Row([
         dbc.Col(html.H2("📉 Jitter & Sync Analyzer", className="text-primary fw-bold my-3"), width=12)
@@ -120,7 +119,7 @@ app.layout = dbc.Container([
                     
                     html.Hr(className="my-2"),
                     
-                    # 顯示項目開關 (新增功能)
+                    # 顯示項目開關 (新增 Avg Diff)
                     html.Label("Metrics:", className="fw-bold small"),
                     dbc.Checklist(
                         id='metric-filter',
@@ -128,9 +127,10 @@ app.layout = dbc.Container([
                             {'label': ' Jitter', 'value': 'jitter'},
                             {'label': ' J_Avg', 'value': 'j_avg'},
                             {'label': ' Diff', 'value': 'diff'},
+                            {'label': ' Avg Diff', 'value': 'avg_diff'}, # 新增選項
                             {'label': ' Margin', 'value': 'margin'},
                         ],
-                        value=['jitter', 'j_avg', 'diff'], # 預設顯示這三個
+                        value=['jitter', 'j_avg', 'diff', 'avg_diff'], # 預設選取
                         switch=False,
                         inputStyle={"marginRight": "5px"}
                     )
@@ -182,25 +182,29 @@ def update_graph(selected_slots, selected_metrics, relayout_data, current_fig_di
     fig = go.Figure()
 
     if not filtered_df.empty:
-        # 定義顏色與樣式
+        # 定義顏色與樣式 (新增 avg_diff)
         styles = {
-            'jitter': {'color': '#e74c3c', 'name': 'Jitter', 'width': 1.5}, # 紅色
-            'j_avg':  {'color': '#3498db', 'name': 'J_Avg',  'width': 2},   # 藍色
-            'diff':   {'color': '#f1c40f', 'name': 'Diff',   'width': 1.5}, # 黃色
-            'margin': {'color': '#2ecc71', 'name': 'Margin', 'width': 1},   # 綠色
+            'jitter':   {'color': '#e74c3c', 'name': 'Jitter',   'width': 1.5}, # 紅
+            'j_avg':    {'color': '#3498db', 'name': 'J_Avg',    'width': 2},   # 藍
+            'diff':     {'color': '#f1c40f', 'name': 'Diff',     'width': 1.5}, # 黃
+            'avg_diff': {'color': '#9b59b6', 'name': 'Avg Diff', 'width': 2},   # 紫 (新增)
+            'margin':   {'color': '#2ecc71', 'name': 'Margin',   'width': 1},   # 綠
         }
 
         # 繪製選定的線條
         for metric in selected_metrics:
             if metric in filtered_df.columns:
+                # 只有當樣式表裡有定義才畫，避免報錯
+                style = styles.get(metric, {'color': '#000000', 'name': metric, 'width': 1})
+                
                 fig.add_trace(go.Scattergl(
                     x=filtered_df['timestamp'], 
                     y=filtered_df[metric],
                     mode='lines+markers',
-                    name=styles[metric]['name'],
-                    line=dict(width=styles[metric]['width'], color=styles[metric]['color']),
+                    name=style['name'],
+                    line=dict(width=style['width'], color=style['color']),
                     marker=dict(size=4),
-                    hovertemplate=f"<b>{styles[metric]['name']}: %{{y}}</b><br>Slot: %{{customdata[0]}}<extra></extra>",
+                    hovertemplate=f"<b>{style['name']}: %{{y}}</b><br>Slot: %{{customdata[0]}}<extra></extra>",
                     customdata=np.stack((filtered_df['slot'],), axis=-1)
                 ))
 
@@ -210,7 +214,6 @@ def update_graph(selected_slots, selected_metrics, relayout_data, current_fig_di
     # --- 保持視圖狀態 (Zoom Persistence) ---
     dragmode = 'zoom'
     x_range = None
-    y_range = None
     
     # 繼承 Dragmode
     if current_fig_dict and 'layout' in current_fig_dict:
@@ -228,7 +231,7 @@ def update_graph(selected_slots, selected_metrics, relayout_data, current_fig_di
             x_range = relayout_data['xaxis.range']
             is_zoomed = True
 
-    # 若非使用者縮放，嘗試繼承舊視圖 (切換 checkbox 時不跳回全覽)
+    # 若非使用者縮放，嘗試繼承舊視圖
     if not is_zoomed and current_fig_dict and 'layout' in current_fig_dict and relayout_data is not None:
          try:
             old_x = current_fig_dict['layout'].get('xaxis', {}).get('range', None)
@@ -244,7 +247,7 @@ def update_graph(selected_slots, selected_metrics, relayout_data, current_fig_di
         xaxis_title='Timestamp (s)',
         yaxis_title='Value',
         template='plotly_white',
-        hovermode='x unified', # 改用統一 hover 方便比較同一時間點的數值
+        hovermode='x unified',
         height=750,
         dragmode=dragmode,
         xaxis=dict(
@@ -257,25 +260,25 @@ def update_graph(selected_slots, selected_metrics, relayout_data, current_fig_di
         margin=dict(l=60, r=20, t=80, b=40)
     )
 
-    # 應用 Range
+    # 應用 Range 並自適應 Y 軸
     if x_range:
         fig.update_layout(xaxis=dict(range=x_range, autorange=False))
-        # Y 軸自適應 (根據目前視圖內的數據計算)
         if not filtered_df.empty:
             mask = (filtered_df['timestamp'] >= x_range[0]) & (filtered_df['timestamp'] <= x_range[1])
             view_df = filtered_df[mask]
             if not view_df.empty and selected_metrics:
-                # 計算所有選定 metric 在目前視圖的最大最小值
                 current_vals = view_df[selected_metrics].values.flatten()
-                y_min, y_max = np.nanmin(current_vals), np.nanmax(current_vals)
-                padding = (y_max - y_min) * 0.1 if y_max != y_min else 5
-                fig.update_layout(yaxis=dict(range=[y_min - padding, y_max + padding], autorange=False))
+                # 排除 NaN
+                current_vals = current_vals[~np.isnan(current_vals)]
+                if len(current_vals) > 0:
+                    y_min, y_max = np.min(current_vals), np.max(current_vals)
+                    padding = (y_max - y_min) * 0.1 if y_max != y_min else 5
+                    fig.update_layout(yaxis=dict(range=[y_min - padding, y_max + padding], autorange=False))
 
     return fig
 
 # --- Port 衝突檢測與啟動 ---
 def find_free_port(start_port):
-    """從 start_port 開始尋找可用的 port"""
     port = start_port
     while True:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
