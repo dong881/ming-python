@@ -16,9 +16,10 @@ SERVER_HOST = '0.0.0.0'
 
 def parse_log_file(filepath):
     """
-    針對新的 JITTER_DEBUG 格式進行解析 (包含 avg_diff)
+    針對新的 Log 格式進行解析
     格式範例: 
-    1329267.565210 [I] ... [JITTER_DEBUG] slot:0 jitter:105 j_avg:83 diff:3 avg_diff:1 late:-351 early:-354 margin:392
+    1332876.506751 [I] ... vnf_p7_convergence_optimization: [13] avg_d: 36, d: 0, t: 1593
+    對應: [slot] avg_diff, diff, target_margin
     """
     if not os.path.exists(filepath):
         print(f"❌ 錯誤: 找不到檔案 {filepath}")
@@ -29,17 +30,21 @@ def parse_log_file(filepath):
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        # Regex 更新: 加入 avg_diff 的匹配
-        # Group順序: 1:Timestamp, 2:Slot, 3:Jitter, 4:J_avg, 5:Diff, 6:Avg_diff, 7:Late, 8:Early, 9:Margin
-        pattern = re.compile(r"([\d\.]+)\s+\[I\].*?\[JITTER_DEBUG\]\s+slot:(\d+)\s+jitter:(-?\d+)\s+j_avg:(-?\d+)\s+diff:(-?\d+)\s+avg_diff:(-?\d+)\s+late:(-?\d+)\s+early:(-?\d+)\s+margin:(-?\d+)")
+        # Regex 更新: 
+        # Group 1: Timestamp
+        # Group 2: Slot (captured from [digits])
+        # Group 3: avg_d
+        # Group 4: d
+        # Group 5: t
+        pattern = re.compile(r"([\d\.]+)\s+\[I\].*?vnf_p7_convergence_optimization:\s+\[(\d+)\]\s+avg_d:\s*(-?\d+),\s+d:\s*(-?\d+),\s+t:\s*(-?\d+)")
         matches = pattern.findall(content)
 
         if not matches:
-            print("⚠️ 警告: 檔案中沒有匹配到任何 [JITTER_DEBUG] 格式的數據！")
+            print("⚠️ 警告: 檔案中沒有匹配到任何符合格式的數據！")
             return pd.DataFrame()
 
-        # 建立 DataFrame (新增 avg_diff)
-        columns = ['timestamp', 'slot', 'jitter', 'j_avg', 'diff', 'avg_diff', 'late', 'early', 'margin']
+        # 建立 DataFrame
+        columns = ['timestamp', 'slot', 'avg_diff', 'diff', 'target_margin']
         df = pd.DataFrame(matches, columns=columns)
 
         # 轉換型別
@@ -51,7 +56,7 @@ def parse_log_file(filepath):
         # 排序
         df = df.sort_values('timestamp').reset_index(drop=True)
 
-        print(f"✅ 成功載入 {len(df)} 筆 Jitter 數據。")
+        print(f"✅ 成功載入 {len(df)} 筆數據。")
         return df
 
     except Exception as e:
@@ -73,7 +78,7 @@ initial_fig.update_layout(
 
 app.layout = dbc.Container([
     dbc.Row([
-        dbc.Col(html.H2("📉 Jitter & Sync Analyzer", className="text-primary fw-bold my-3"), width=12)
+        dbc.Col(html.H2("📉 Convergence Optimization Analyzer", className="text-primary fw-bold my-3"), width=12)
     ], className="border-bottom mb-3"),
 
     dbc.Row([
@@ -83,7 +88,7 @@ app.layout = dbc.Container([
                 dbc.CardBody([
                     dcc.Loading(
                         dcc.Graph(
-                            id='jitter-graph',
+                            id='main-graph',
                             figure=initial_fig,
                             style={'height': '85vh'},
                             config={'scrollZoom': True, 'displayModeBar': True}
@@ -119,18 +124,16 @@ app.layout = dbc.Container([
                     
                     html.Hr(className="my-2"),
                     
-                    # 顯示項目開關 (新增 Avg Diff)
+                    # 顯示項目開關
                     html.Label("Metrics:", className="fw-bold small"),
                     dbc.Checklist(
                         id='metric-filter',
                         options=[
-                            {'label': ' Jitter', 'value': 'jitter'},
-                            {'label': ' J_Avg', 'value': 'j_avg'},
-                            {'label': ' Diff', 'value': 'diff'},
-                            {'label': ' Avg Diff', 'value': 'avg_diff'}, # 新增選項
-                            {'label': ' Margin', 'value': 'margin'},
+                            {'label': ' Diff (d)', 'value': 'diff'},
+                            {'label': ' Avg Diff (avg_d)', 'value': 'avg_diff'},
+                            {'label': ' Target (t)', 'value': 'target_margin'},
                         ],
-                        value=['jitter', 'j_avg', 'diff', 'avg_diff'], # 預設選取
+                        value=['diff', 'avg_diff', 'target_margin'], # 預設全選
                         switch=False,
                         inputStyle={"marginRight": "5px"}
                     )
@@ -160,11 +163,11 @@ def update_slot_checklist(btn_all, btn_none, options):
 
 # --- Callback 2: 核心繪圖 ---
 @app.callback(
-    Output('jitter-graph', 'figure'),
+    Output('main-graph', 'figure'),
     [Input('slot-filter', 'value'),
      Input('metric-filter', 'value'),
-     Input('jitter-graph', 'relayoutData')],
-    [State('jitter-graph', 'figure')]
+     Input('main-graph', 'relayoutData')],
+    [State('main-graph', 'figure')]
 )
 def update_graph(selected_slots, selected_metrics, relayout_data, current_fig_dict):
     if df.empty:
@@ -182,19 +185,16 @@ def update_graph(selected_slots, selected_metrics, relayout_data, current_fig_di
     fig = go.Figure()
 
     if not filtered_df.empty:
-        # 定義顏色與樣式 (新增 avg_diff)
+        # 定義顏色與樣式
         styles = {
-            'jitter':   {'color': '#e74c3c', 'name': 'Jitter',   'width': 1.5}, # 紅
-            'j_avg':    {'color': '#3498db', 'name': 'J_Avg',    'width': 2},   # 藍
-            'diff':     {'color': '#f1c40f', 'name': 'Diff',     'width': 1.5}, # 黃
-            'avg_diff': {'color': '#9b59b6', 'name': 'Avg Diff', 'width': 2},   # 紫 (新增)
-            'margin':   {'color': '#2ecc71', 'name': 'Margin',   'width': 1},   # 綠
+            'diff':          {'color': '#f1c40f', 'name': 'Diff (d)',       'width': 1.5}, # 黃色
+            'avg_diff':      {'color': '#9b59b6', 'name': 'Avg Diff (avg_d)','width': 2},   # 紫色
+            'target_margin': {'color': '#2ecc71', 'name': 'Target (t)',     'width': 1.5}, # 綠色
         }
 
         # 繪製選定的線條
         for metric in selected_metrics:
             if metric in filtered_df.columns:
-                # 只有當樣式表裡有定義才畫，避免報錯
                 style = styles.get(metric, {'color': '#000000', 'name': metric, 'width': 1})
                 
                 fig.add_trace(go.Scattergl(
@@ -231,7 +231,6 @@ def update_graph(selected_slots, selected_metrics, relayout_data, current_fig_di
             x_range = relayout_data['xaxis.range']
             is_zoomed = True
 
-    # 若非使用者縮放，嘗試繼承舊視圖
     if not is_zoomed and current_fig_dict and 'layout' in current_fig_dict and relayout_data is not None:
          try:
             old_x = current_fig_dict['layout'].get('xaxis', {}).get('range', None)
@@ -241,7 +240,7 @@ def update_graph(selected_slots, selected_metrics, relayout_data, current_fig_di
 
     # Layout Styling
     fig.update_layout(
-        title={'text': 'Jitter / Avg / Diff Analysis', 'font': {'size': 20, 'color': '#2c3e50'}},
+        title={'text': 'Diff / Avg_Diff / Target Analysis', 'font': {'size': 20, 'color': '#2c3e50'}},
         plot_bgcolor='white',
         paper_bgcolor='white',
         xaxis_title='Timestamp (s)',
@@ -268,7 +267,6 @@ def update_graph(selected_slots, selected_metrics, relayout_data, current_fig_di
             view_df = filtered_df[mask]
             if not view_df.empty and selected_metrics:
                 current_vals = view_df[selected_metrics].values.flatten()
-                # 排除 NaN
                 current_vals = current_vals[~np.isnan(current_vals)]
                 if len(current_vals) > 0:
                     y_min, y_max = np.min(current_vals), np.max(current_vals)
