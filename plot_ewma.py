@@ -9,6 +9,7 @@ import numpy as np
 import socket
 
 # ================= 設定區 =================
+# 請確認此路徑正確，或修改為您的測試檔案路徑
 INPUT_FILE_PATH = '/home/hpe/gNB-logs/nfapi-VNF-pegatron-localcn-develop-latest-ming-develop.log'
 DEFAULT_PORT = 8050
 SERVER_HOST = '0.0.0.0'
@@ -16,10 +17,9 @@ SERVER_HOST = '0.0.0.0'
 
 def parse_log_file(filepath):
     """
-    針對包含 Peak 的 Log 格式進行解析
-    格式範例: 
-    1365762.465210 [I] ... [0] avg_d: 57, d: 3, p:108, t: 158
-    對應: [slot] avg_diff, diff, peak_envelope_us, target_margin
+    解析 Log 格式: 
+    1506853.277786 [I] 3330262592: vnf_p7_convergence_optimization: (-1005, -1200, 195)
+    對應: timestamp, val_1, val_2, val_3
     """
     if not os.path.exists(filepath):
         print(f"❌ 錯誤: 找不到檔案 {filepath}")
@@ -31,29 +31,28 @@ def parse_log_file(filepath):
             content = f.read()
 
         # Regex 更新: 
-        # Group 1: Timestamp
-        # Group 2: Slot
-        # Group 3: avg_d
-        # Group 4: d
-        # Group 5: p (peak_envelope_us)
-        # Group 6: t (target_margin)
-        pattern = re.compile(r"([\d\.]+)\s+\[I\].*?vnf_p7_convergence_optimization:\s+\[(\d+)\]\s+avg_d:\s*(-?\d+),\s+d:\s*(-?\d+),\s+p:\s*(-?\d+),\s+t:\s*(-?\d+)")
+        # Group 1: Timestamp (浮點數)
+        # Group 2: Value 1 (整數)
+        # Group 3: Value 2 (整數)
+        # Group 4: Value 3 (整數)
+        # 匹配邏輯: 抓取 timestamp，忽略中間雜訊，直到找到 vnf_p7...: 後面的括號內容
+        pattern = re.compile(r"([\d\.]+)\s+\[I\].*?vnf_p7_convergence_optimization:\s*\((-?\d+),\s*(-?\d+),\s*(-?\d+)\)")
         matches = pattern.findall(content)
 
         if not matches:
             print("⚠️ 警告: 檔案中沒有匹配到任何符合格式的數據！")
+            # 這是為了調試用，印出前幾行看看為什麼沒匹配到
+            print(f"檔案前 200 字元預覽: {content[:200]}")
             return pd.DataFrame()
 
         # 建立 DataFrame
-        columns = ['timestamp', 'slot', 'avg_diff', 'diff', 'peak_envelope_us', 'target_margin']
+        columns = ['timestamp', 'val_1', 'val_2', 'val_3']
         df = pd.DataFrame(matches, columns=columns)
 
         # 轉換型別
         for col in columns:
             df[col] = df[col].astype(float)
         
-        df['slot'] = df['slot'].astype(int)
-
         # 排序
         df = df.sort_values('timestamp').reset_index(drop=True)
 
@@ -105,114 +104,70 @@ app.layout = dbc.Container([
             dbc.Card([
                 dbc.CardHeader("🛠️ Filter", className="bg-primary text-white fw-bold py-2 text-center", style={'fontSize': '1rem'}),
                 dbc.CardBody([
-                    # 全選/清除按鈕
-                    dbc.ButtonGroup([
-                        dbc.Button("All", id="btn-all", color="success", outline=True, size="sm", style={'padding': '2px'}),
-                        dbc.Button("Clr", id="btn-none", color="danger", outline=True, size="sm", style={'padding': '2px'}),
-                    ], className="d-flex w-100 mb-2"),
-
-                    # Slot 篩選
-                    html.Div([
-                        dbc.Checklist(
-                            id='slot-filter',
-                            options=[{'label': f' S{i}', 'value': i} for i in range(20)], 
-                            value=list(range(20)),
-                            switch=True,
-                            className="slot-checklist",
-                            style={'fontSize': '0.8rem'}
-                        )
-                    ], style={'maxHeight': '40vh', 'overflowY': 'auto', 'padding': '0', 'borderBottom': '1px solid #eee'}),
-                    
-                    html.Hr(className="my-2"),
-                    
-                    # 顯示項目開關 (新增 Peak)
+                    # 顯示項目開關
                     html.Label("Metrics:", className="fw-bold small"),
                     dbc.Checklist(
                         id='metric-filter',
                         options=[
-                            {'label': ' Diff (d)', 'value': 'diff'},
-                            {'label': ' Avg Diff (avg_d)', 'value': 'avg_diff'},
-                            {'label': ' Peak (p)', 'value': 'peak_envelope_us'}, # 新增
-                            {'label': ' Target (t)', 'value': 'target_margin'},
+                            {'label': ' Value 1', 'value': 'val_1'},
+                            {'label': ' Value 2', 'value': 'val_2'},
+                            {'label': ' Value 3', 'value': 'val_3'},
                         ],
-                        value=['diff', 'avg_diff', 'peak_envelope_us', 'target_margin'], # 預設全選
+                        value=['val_1', 'val_2', 'val_3'], # 預設全選
                         switch=False,
-                        inputStyle={"marginRight": "5px"}
-                    )
+                        inputStyle={"marginRight": "5px"},
+                        style={'fontSize': '0.9rem'}
+                    ),
+                    
+                    html.Hr(),
+                    html.Div("Log Data Visualization", className="text-muted small text-center")
 
-                ], style={'padding': '5px'})
+                ], style={'padding': '10px'})
             ], className="shadow-sm border-0 h-100")
         ], width=1, style={'minWidth': '120px', 'maxWidth': '140px'})
     ], className="g-1")
 ], fluid=True, style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh', 'padding': '5px'})
 
-# --- Callback 1: Slot 全選/清空 ---
-@app.callback(
-    Output('slot-filter', 'value'),
-    [Input('btn-all', 'n_clicks'), Input('btn-none', 'n_clicks')],
-    [State('slot-filter', 'options')]
-)
-def update_slot_checklist(btn_all, btn_none, options):
-    ctx = dash.callback_context
-    if not ctx.triggered:
-        return list(range(20))
-    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
-    if button_id == 'btn-all':
-        return list(range(20))
-    elif button_id == 'btn-none':
-        return []
-    return list(range(20))
-
-# --- Callback 2: 核心繪圖 ---
+# --- Callback: 核心繪圖 ---
 @app.callback(
     Output('main-graph', 'figure'),
-    [Input('slot-filter', 'value'),
-     Input('metric-filter', 'value'),
+    [Input('metric-filter', 'value'),
      Input('main-graph', 'relayoutData')],
     [State('main-graph', 'figure')]
 )
-def update_graph(selected_slots, selected_metrics, relayout_data, current_fig_dict):
+def update_graph(selected_metrics, relayout_data, current_fig_dict):
     if df.empty:
-        return no_update
+        # 如果沒有數據，回傳空圖表但保留標題
+        empty_fig = go.Figure()
+        empty_fig.update_layout(title={'text': 'No Data Found / Parse Error', 'x': 0.5})
+        return empty_fig
 
-    if selected_slots is None:
-        selected_slots = list(range(20))
-    
     if selected_metrics is None:
         selected_metrics = []
-
-    # 1. 資料篩選
-    filtered_df = df[df['slot'].isin(selected_slots)]
     
     fig = go.Figure()
 
-    if not filtered_df.empty:
-        # 定義顏色與樣式 (新增 peak)
-        styles = {
-            'diff':             {'color': '#f1c40f', 'name': 'Diff (d)',       'width': 1.5}, # 黃色
-            'avg_diff':         {'color': '#9b59b6', 'name': 'Avg Diff (avg_d)','width': 2},  # 紫色
-            'peak_envelope_us': {'color': '#e67e22', 'name': 'Peak (p)',       'width': 1.5}, # 橙色 (新增)
-            'target_margin':    {'color': '#2ecc71', 'name': 'Target (t)',     'width': 1.5}, # 綠色
-        }
+    # 定義顏色與樣式
+    styles = {
+        'val_1': {'color': '#e74c3c', 'name': 'Val 1', 'width': 1.5}, # 紅色
+        'val_2': {'color': '#3498db', 'name': 'Val 2', 'width': 1.5}, # 藍色
+        'val_3': {'color': '#2ecc71', 'name': 'Val 3', 'width': 1.5}, # 綠色
+    }
 
-        # 繪製選定的線條
-        for metric in selected_metrics:
-            if metric in filtered_df.columns:
-                style = styles.get(metric, {'color': '#000000', 'name': metric, 'width': 1})
-                
-                fig.add_trace(go.Scattergl(
-                    x=filtered_df['timestamp'], 
-                    y=filtered_df[metric],
-                    mode='lines+markers',
-                    name=style['name'],
-                    line=dict(width=style['width'], color=style['color']),
-                    marker=dict(size=4),
-                    hovertemplate=f"<b>{style['name']}: %{{y}}</b><br>Slot: %{{customdata[0]}}<extra></extra>",
-                    customdata=np.stack((filtered_df['slot'],), axis=-1)
-                ))
-
-    else:
-        fig.update_layout(title={'text': 'No Data Selected', 'x': 0.5})
+    # 繪製選定的線條
+    for metric in selected_metrics:
+        if metric in df.columns:
+            style = styles.get(metric, {'color': '#000000', 'name': metric, 'width': 1})
+            
+            fig.add_trace(go.Scattergl(
+                x=df['timestamp'], 
+                y=df[metric],
+                mode='lines+markers',
+                name=style['name'],
+                line=dict(width=style['width'], color=style['color']),
+                marker=dict(size=4),
+                hovertemplate=f"<b>{style['name']}: %{{y}}</b><br>Time: %{{x}}<extra></extra>"
+            ))
 
     # --- 保持視圖狀態 (Zoom Persistence) ---
     dragmode = 'zoom'
@@ -243,7 +198,7 @@ def update_graph(selected_slots, selected_metrics, relayout_data, current_fig_di
 
     # Layout Styling
     fig.update_layout(
-        title={'text': 'Diff / Avg / Peak / Target Analysis', 'font': {'size': 20, 'color': '#2c3e50'}},
+        title={'text': 'Optimization Values Over Time', 'font': {'size': 20, 'color': '#2c3e50'}},
         plot_bgcolor='white',
         paper_bgcolor='white',
         xaxis_title='Timestamp (s)',
@@ -265,16 +220,16 @@ def update_graph(selected_slots, selected_metrics, relayout_data, current_fig_di
     # 應用 Range 並自適應 Y 軸
     if x_range:
         fig.update_layout(xaxis=dict(range=x_range, autorange=False))
-        if not filtered_df.empty:
-            mask = (filtered_df['timestamp'] >= x_range[0]) & (filtered_df['timestamp'] <= x_range[1])
-            view_df = filtered_df[mask]
-            if not view_df.empty and selected_metrics:
-                current_vals = view_df[selected_metrics].values.flatten()
-                current_vals = current_vals[~np.isnan(current_vals)]
-                if len(current_vals) > 0:
-                    y_min, y_max = np.min(current_vals), np.max(current_vals)
-                    padding = (y_max - y_min) * 0.1 if y_max != y_min else 5
-                    fig.update_layout(yaxis=dict(range=[y_min - padding, y_max + padding], autorange=False))
+        # 計算可視範圍內的 Y 軸範圍
+        mask = (df['timestamp'] >= x_range[0]) & (df['timestamp'] <= x_range[1])
+        view_df = df[mask]
+        if not view_df.empty and selected_metrics:
+            current_vals = view_df[selected_metrics].values.flatten()
+            current_vals = current_vals[~np.isnan(current_vals)]
+            if len(current_vals) > 0:
+                y_min, y_max = np.min(current_vals), np.max(current_vals)
+                padding = (y_max - y_min) * 0.1 if y_max != y_min else 5
+                fig.update_layout(yaxis=dict(range=[y_min - padding, y_max + padding], autorange=False))
 
     return fig
 
